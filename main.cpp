@@ -190,7 +190,7 @@ class Scene {
                 // return getColor in the reflected direction, with
                 // recursion_depth+1 (recursively)
                 auto ref_direction = ray.u - 2 * dot(ray.u, N) * N;
-                auto new_ray = Ray(P, ref_direction);
+                auto new_ray = Ray(P + 1e-10*N, ref_direction);
 
                 return getColor(new_ray, ++recursion_depth);
             }  // else
@@ -235,6 +235,7 @@ class Scene {
 
             // TODO (lab 2) : add indirect lighting component with a recursive
             // call
+            // sample pdf with pdf p(w) = <w, normal> / pi, and add the contribution of the sampled direction to the
         }
 
         return Vector(0, 0, 0);
@@ -255,22 +256,22 @@ int main() {
         engine[i].seed(i);
     }
 
-    Sphere center_sphere(Vector(0, 0, 0), 10., Vector(0.8, 0.8, 0.8));
+    Sphere center_sphere(Vector(0, 0, 0), 10., Vector(0.8, 0.8, 0.8), true);
     Sphere wall_left(Vector(-1000, 0, 0), 940, Vector(0.5, 0.8, 0.1));
     Sphere wall_right(Vector(1000, 0, 0), 940, Vector(0.9, 0.2, 0.3));
     Sphere wall_front(Vector(0, 0, -1000), 940, Vector(0.1, 0.6, 0.7));
     Sphere wall_behind(Vector(0, 0, 1000), 940, Vector(0.8, 0.2, 0.9));
-    Sphere ceiling(Vector(0, 1000, 0), 940, Vector(0.3, 0.5, 0.3));
-    Sphere floor(Vector(0, -1000, 0), 990, Vector(0.6, 0.5, 0.7));
+    Sphere ceiling(Vector(0, 1000, 0), 940, Vector(0.3, 0.5, 0.3), true);
+    Sphere floor(Vector(0, -1000, 0), 990, Vector(0.6, 0.5, 0.7), true);
 
     Scene scene;
     scene.camera_center = Vector(0, 0, 55);
     scene.light_position = Vector(-10, 20, 40);
     scene.light_intensity = 3E7;
-    scene.fov = 60 * M_PI / 180.;
+    scene.fov = 90 * M_PI / 180.;
     scene.gamma =
         2.2;  // TODO (lab 1) : play with gamma ; typically, gamma = 2.2
-    scene.max_light_bounce = 5;
+    scene.max_light_bounce = 100;
 
     scene.addObject(&center_sphere);
 
@@ -300,6 +301,7 @@ int main() {
 
             // TODO (lab 2) : add Monte Carlo / averaging of random ray
             // contributions here
+
             // TODO (lab 2) : add antialiasing by altering the ray_direction
             // here
             // TODO (lab 2) : add depth of field effect by altering the ray
@@ -318,7 +320,7 @@ int main() {
                                                             1. / scene.gamma)));
         }
     }
-    stbi_write_png("image.png", W, H, 3, &image[0], 0);
+    stbi_write_png("image_gamma2.png", W, H, 3, &image[0], 0);
 
     return 0;
 }
