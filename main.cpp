@@ -299,12 +299,12 @@ public:
             auto edge1 = v1 - v0;
             auto edge2 = v2 - v0;
 
-            auto beta = dot(edge2, cross(ray.u, (v0 - ray.O))) / dot(ray.u, cross(edge1, edge2));
+            auto beta = dot(edge2, cross((v0 - ray.O), ray.u)) / dot(ray.u, cross(edge1, edge2));
 
-            auto gamma = - dot(edge1, cross(ray.u, (v0 - ray.O))) / dot(ray.u, cross(edge1, edge2));
+            auto gamma = -1 * dot(edge1, cross((v0 - ray.O), ray.u)) / dot(ray.u, cross(edge1, edge2));
 
             auto alpha = 1 - beta - gamma;
-            auto tri_t = dot(cross(edge1, edge2), (v0 - ray.O)) / dot(ray.u, cross(edge1, edge2));
+            auto tri_t = dot((v0 - ray.O), cross(edge1, edge2)) / dot(ray.u, cross(edge1, edge2));
 
             if (tri_t > 0 && alpha >= 0 && beta >= 0 && gamma >= 0) {
                 if (tri_t < t_min) {
@@ -552,7 +552,7 @@ int main() {
     scene.fov = 90 * M_PI / 180.;
     scene.gamma =
         2.2;  // TODO (lab 1) : play with gamma ; typically, gamma = 2.2
-    scene.max_light_bounce = 15;
+    scene.max_light_bounce = 10;
 
     // scene.addObject(&center_sphere);
     // scene.addObject(&center_sphere_2);
@@ -568,9 +568,9 @@ int main() {
 
     scene.addObject(&cat);
 
-    int SAMPLES = 8;
+    int SAMPLES = 16;
     double FOCAL_LENGTH = 40.;
-    double APERTURE_SIZE = 1.;
+    double APERTURE_SIZE = 0.;
     double ANTIALIASING = 0.5;
 
     std::vector<unsigned char> image(W * H * 3, 0);
