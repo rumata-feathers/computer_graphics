@@ -51,11 +51,11 @@ class Polygon {
    public:
     double area() {
         if (vertices.size() < 3) return 0;
-        // TODO Lab 3
+        // TODO Lab 2
         // Compute the area of the polygon
         Vector base_point = vertices[0];
         double area = 0.0;
-        for (int i = 1; i < vertices.size() - 1; i++) {
+        for (int i = 1; i < vertices.size() - 1; ++i) {
             Vector v1 = vertices[i] - base_point;
             Vector v2 = vertices[i + 1] - base_point;
             area += 0.5 * std::abs(v1[0] * v2[1] - v1[1] * v2[0]);
@@ -74,10 +74,23 @@ class Polygon {
     double integral_square_distance(const Vector& Pi) {
         if (vertices.size() < 3) return 0;
 
-        // TODO Lab 3
+        // TODO Lab 2
         // Compute the integral of ||x-Pi||^2 over the polygon
+        Vector v0 = vertices[0];
+        double area = 0.0;
+        for (int i = 1; i < vertices.size() - 1; ++i) {
+            Vector v1 = vertices[i];
+            Vector v2 = vertices[i + 1];
+            Polygon triangle; triangle.vertices.emplace_back(v0);triangle.vertices.emplace_back(v1);triangle.vertices.emplace_back(v2);
+            double dot_sum = 0.0;
+            for (int j = 0; j < 3; ++j)
+                for (int jj = j; jj < 3; ++jj) 
+                    dot_sum += dot(triangle.vertices[j] - Pi, triangle.vertices[jj]-Pi);
+            
+            area += triangle.area() * dot_sum / 6;
+        }
 
-        return -111;
+        return area;
     }
 
     std::vector<Vector> vertices;
@@ -217,9 +230,18 @@ class VoronoiDiagram {
             cells[i].vertices.push_back(Vector(1, 0));
             cells[i].vertices.push_back(Vector(1, 1));
             cells[i].vertices.push_back(Vector(0, 1));
-            // todo: k nearest neighbours
-            for (int j = 0; j < points.size(); j++) {
+            const int k = 30; // chossoing generoud 30 nieghbours
+            std::vector<std::pair<double, int>> dists;
+            dists.reserve(points.size() - 1);
+            for (int j = 0; j < (int)points.size(); j++) {
                 if (i == j) continue;
+                dists.push_back({(points[i] - points[j]).norm2(), j});
+            }
+            int kk = std::min(k, (int)dists.size());
+            std::partial_sort(dists.begin(), dists.begin() + kk, dists.end());
+
+            for (int idx = 0; idx < kk; idx++) {
+                int j = dists[idx].second;
                 cells[i] = clip_by_bisector(cells[i], points[i], points[j],
                                             weights[i], weights[j]);
             }
@@ -248,26 +270,27 @@ class VoronoiDiagram {
         Polygon result;
         result.vertices.clear();
 
-        Vector midpoint = (P0 + Pi) / 2.0;
-        Vector direction = Pi - P0;
+        // Vector midpoint = (P0 + Pi) / 2.0;
+        // we improve that with Sutherland-Hodgman algorithm
+        Vector direction = P0 - Pi;
+        Vector midpoint = (P0 + Pi) / 2.0 - (w0 - wi) * direction / (2.0 * direction.norm2());
 
         for (size_t i = 0; i < V.vertices.size(); ++i) {
             const Vector& current = V.vertices[i];
             const Vector& next = V.vertices[(i + 1) % V.vertices.size()];
 
-            double current_side =
-                dot(current - midpoint, direction) - (w0 - wi) / 2.0;
-            double next_side =
-                dot(next - midpoint, direction) - (w0 - wi) / 2.0;
+            bool current_inside = (current - P0).norm2() - w0 <= (current - Pi).norm2() - wi;
+            bool next_inside    = (next    - P0).norm2() - w0 <= (next    - Pi).norm2() - wi;
 
-            if (current_side <= 0) {
-                result.vertices.push_back(current);
-            }
-
-            if (current_side * next_side < 0) {
-                double t = current_side / (current_side - next_side);
-                Vector intersection = current + t * (next - current);
-                result.vertices.push_back(intersection);
+            if (current_inside && next_inside) {
+                result.vertices.push_back(next);
+            } else if (current_inside && !next_inside) {
+                double t = dot(midpoint - current, direction) / dot(next - current, direction);
+                result.vertices.push_back(current + t * (next - current));
+            } else if (!current_inside && next_inside) {
+                double t = dot(midpoint - current, direction) / dot(next - current, direction);
+                result.vertices.push_back(current + t * (next - current));
+                result.vertices.push_back(next);
             }
         }
 
@@ -310,8 +333,17 @@ static lbfgsfloatval_t evaluate(void* instance, const lbfgsfloatval_t* x,
     // its gradient (g[i], i=0..n-1) Lab 3 (fluid) : adapt these functions to
     // support partial optimal transport (now "n" has been increased by 1 to
     // account for the air variable)
-
+    double lambda_i = 1.0 / n;
     lbfgsfloatval_t fx = 0.0;
+    for (int i = 0; i < n; ++i) {
+        auto cell_area = ot->vor.cells[i].area();
+        auto int_d2 = ot->vor.cells[i].integral_square_distance(ot->vor.points[i]);
+
+
+        // we need to minimize 
+        fx -= int_d2 - ot->vor.weights[i]*cell_area + lambda_i*ot->vor.weights[i];
+        g[i] = -(lambda_i - cell_area);
+    }
     // g[i] = ...
     // fx = ...
 
@@ -421,16 +453,17 @@ int main() {
 
     VoronoiDiagram vor;
 
-    int n = 50;
+    int n = 100;
     vor.points.clear();
     for (int i = 0; i < n; ++i) {
         double x = static_cast<double>(rand()) / RAND_MAX;
         double y = static_cast<double>(rand()) / RAND_MAX;
         vor.points.push_back(Vector(x, y));
         // vor.weights.push_back(static_cast<double>(rand()) / RAND_MAX);
-        vor.weights.push_back(0.0);
+        vor.weights.push_back(0.5);
     }
     // vor.weights.resize(vor.points.size(), 0.0);
+    printf("starting voronoi\n");
     vor.cells.resize(vor.points.size());
     vor.compute();
 
@@ -441,8 +474,23 @@ int main() {
     }
 
     // s.push_back(p);
+    OptimalTransport ot;
+    ot.vor.points = vor.points;
+    // ot.vor.weights.resize(n, 0.0);
+    ot.vor.weights = vor.weights;
+
+    ot.vor.cells.resize(n);
+    ot.optimize();
+
+    // s.clear();
+    // for (const auto& cell : ot.vor.cells) s.push_back(cell);
+
+    save_frame(ot.vor.cells, "ot", 0, ot.vor.points, ot.vor.weights);
+    save_svg(ot.vor.cells, "ot.svg", &ot.vor.points, "lightblue");
+
 
     save_frame(s, "toto", 0, vor.points, vor.weights);
     save_svg(s, "toto.svg", &vor.points, "lightblue");
+
     return 0;
 }
