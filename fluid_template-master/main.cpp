@@ -68,7 +68,21 @@ class Polygon {
         // TODO Lab 3
         // Compute the centroid of the polygon
 
-        return Vector(-111, -111);
+        double A = 0;
+        double Cx = 0, Cy = 0;
+        for (int i = 0; i < vertices.size(); i++) {
+            int j = (i + 1) % vertices.size();
+            double cross = vertices[i][0] * vertices[j][1] - vertices[j][0] * vertices[i][1];
+            A += cross / 2;
+            Cx += (vertices[i][0] + vertices[j][0]) * cross;
+            Cy += (vertices[i][1] + vertices[j][1]) * cross;
+        }
+        if (A != 0) {
+            Cx /= 6 * A;
+            Cy /= 6 * A;
+        }
+
+        return Vector(Cx, Cy);
     }
 
     double integral_square_distance(const Vector& Pi) {
@@ -245,6 +259,23 @@ class VoronoiDiagram {
                 cells[i] = clip_by_bisector(cells[i], points[i], points[j],
                                             weights[i], weights[j]);
             }
+
+            if (!weights.empty() && (int)weights.size() > points.size()) {
+                double wair = weights[points.size()];
+                double R2   = weights[i] - wair;
+                if (R2 > 0.0) {;
+                    int num_sides = 64;
+                    for (int k = 0; k < num_sides && !cells[i].vertices.empty(); k++) {
+                        double t0 = 2.0 * M_PI * k / num_sides;
+                        double t1 = 2.0 * M_PI * (k + 1) / num_sides;
+                        Vector u = points[i] + Vector(sqrt(R2) * cos(t0), sqrt(R2) * sin(t0));
+                        Vector v = points[i] + Vector(sqrt(R2) * cos(t1), sqrt(R2) * sin(t1));
+                        cells[i] = clip_by_edge(cells[i], u, v);
+                    }
+                } else {
+                    cells[i].vertices.clear();
+                }
+            }
         }
     }
 
@@ -256,7 +287,29 @@ class VoronoiDiagram {
         // (discretized) disk
 
         Polygon result;
+        auto edge = v - u;
+        for (int i = 0; i < V.vertices.size(); i++) {
+            const Vector& current = V.vertices[i];
+            const Vector& next = V.vertices[(i + 1) % V.vertices.size()];
 
+            bool current_inside =
+                (edge[0] * (current[1] - u[1]) - edge[1] * (current[0] - u[0])) >= 0.0;
+            bool next_inside =
+                (edge[0] * (next[1] - u[1]) - edge[1] * (next[0] - u[0])) >= 0.0;
+
+            if (current_inside && next_inside) {
+                result.vertices.push_back(next);
+            } else if (current_inside && !next_inside) {
+                double t = (edge[0] * (next[1] - u[1]) - edge[1] * (next[0] - u[0])) /
+                           (edge[0] * (current[1] - next[1]) - edge[1] * (current[0] - next[0]));
+                result.vertices.push_back(next - t * (current - next));
+            } else if (!current_inside && next_inside) {
+                double t = (edge[0] * (next[1] - u[1]) - edge[1] * (next[0] - u[0])) /
+                (edge[0] * (current[1] - next[1]) - edge[1] * (current[0] - next[0]));
+                result.vertices.push_back(next - t * (current - next));
+                result.vertices.push_back(next);
+            }
+        }
         return result;
     }
 
@@ -317,6 +370,8 @@ class OptimalTransport {
     void optimize();
 
     VoronoiDiagram vor;
+    double fluid_volume;
+    bool partial = false;
 };
 
 // Labs 2 and 3
@@ -335,14 +390,46 @@ static lbfgsfloatval_t evaluate(void* instance, const lbfgsfloatval_t* x,
     // account for the air variable)
     double lambda_i = 1.0 / n;
     lbfgsfloatval_t fx = 0.0;
-    for (int i = 0; i < n; ++i) {
-        auto cell_area = ot->vor.cells[i].area();
-        auto int_d2 = ot->vor.cells[i].integral_square_distance(ot->vor.points[i]);
+    // lab 2
+    // for (int i = 0; i < n; ++i) {
+    //     auto cell_area = ot->vor.cells[i].area();
+    //     auto int_d2 = ot->vor.cells[i].integral_square_distance(ot->vor.points[i]);
 
 
-        // we need to minimize 
-        fx -= int_d2 - ot->vor.weights[i]*cell_area + lambda_i*ot->vor.weights[i];
-        g[i] = -(lambda_i - cell_area);
+    //     // we need to minimize 
+    //     fx -= int_d2 - ot->vor.weights[i]*cell_area + lambda_i*ot->vor.weights[i];
+    //     g[i] = -(lambda_i - cell_area);
+    // }
+    // lab 3
+    if (!ot->partial) {
+        double lambda_i = 1.0 / n;
+        for (int i = 0; i < n; ++i) {
+            double cell_area = ot->vor.cells[i].area();
+            double int_d2   = ot->vor.cells[i].integral_square_distance(ot->vor.points[i]);
+
+            fx  -= int_d2 - ot->vor.weights[i] * cell_area + lambda_i * ot->vor.weights[i];
+            g[i] = -(lambda_i - cell_area);
+        }
+    } else {
+        double lambda_i   = ot->fluid_volume / (n-1);
+        double lambda_air = 1.0 - ot->fluid_volume;
+
+        double total_fluid_area = 0.0;
+        for (int i = 0; i < n-1; ++i) {
+            double cell_area = ot->vor.cells[i].area();
+            double int_d2   = ot->vor.cells[i].integral_square_distance(ot->vor.points[i]);
+            total_fluid_area += cell_area;
+
+            fx  -= int_d2 - ot->vor.weights[i] * cell_area + lambda_i * ot->vor.weights[i];
+            g[i] = -(lambda_i - cell_area);
+        }
+
+
+        double air_area = 1.0 - total_fluid_area;
+        double wair     = ot->vor.weights[n-1];
+
+        fx   -= wair * (lambda_air - air_area);
+        g[n-1]  = -(lambda_air - air_area);
     }
     // g[i] = ...
     // fx = ...
@@ -385,7 +472,26 @@ void OptimalTransport::optimize() {
 // Lab 3 (fluids)
 class Fluid {
    public:
-    Fluid(int N_particles = 1000) : N_particles(N_particles) {}
+    Fluid(int N_particles = 1000) : N_particles(N_particles) {
+        fluid_volume = 0.4;
+        this->ot.partial = true;
+        this->ot.fluid_volume = fluid_volume;
+        
+        this->ot.vor.cells.resize(N_particles);
+
+        this->ot.vor.points.resize(N_particles);
+        this->ot.vor.weights.resize(N_particles + 1, 0.0); 
+        particles.resize(N_particles);
+        velocities.resize(N_particles, Vector(0.0, 0.0));
+        srand(42);
+        for (int i = 0; i < N_particles; i++) {
+            double x = (double)rand() / RAND_MAX;
+            double y = (double)rand() / RAND_MAX * 0.5;
+            this->ot.vor.points[i] = Vector(x, y);
+            particles[i]= Vector(x, y);
+        }
+        this->ot.optimize();
+    }
 
     // Lab 3 : advance the simulation dt in time
     void time_step(double dt) {
@@ -397,6 +503,30 @@ class Fluid {
         // Compute semi-discrete partial optimal transport
         // for all particles, add gravity and spring force towards cell
         // centroid, integrate acceleration->velocity and velocity->position
+        ot.vor.points = particles;
+        ot.optimize();
+
+        for (int i = 0; i < N_particles; ++i) {
+            Vector centroid = ot.vor.cells[i].centroid();
+            Vector dir = centroid - particles[i];
+            Vector spring_force = (1 / epsilon2) * dir;
+            Vector total_force = m_i * g + spring_force;
+            velocities[i] = velocities[i] + (total_force / m_i) * dt;
+            particles[i] = particles[i] + velocities[i] * dt;
+
+             // Handle collisions with the boundaries of the unit square
+            for (int d = 0; d < 2; ++d) {
+                if (particles[i][d] < 0) {
+                    particles[i][d] *= -1;
+                    velocities[i][d] *= -1;
+                }
+                if (particles[i][d] > 1) {
+                    particles[i][d] = 2 - particles[i][d];
+                    velocities[i][d] *= -1;
+                }
+            }
+        }
+
     }
 
     // just run the full simulation
@@ -444,53 +574,59 @@ void save_svg(const std::vector<Polygon>& polygons, std::string filename, const 
     fclose(f);
 }
 
+// int main() {
+//     // Polygon p;
+//     // p.vertices.push_back(Vector(0.1, 0.2));
+//     // p.vertices.push_back(Vector(0.6, 0.4));
+//     // p.vertices.push_back(Vector(0.5, 0.7));
+//     // p.vertices.push_back(Vector(0.2, 0.5));
+
+//     VoronoiDiagram vor;
+
+//     int n = 100;
+//     vor.points.clear();
+//     for (int i = 0; i < n; ++i) {
+//         double x = static_cast<double>(rand()) / RAND_MAX;
+//         double y = static_cast<double>(rand()) / RAND_MAX;
+//         vor.points.push_back(Vector(x, y));
+//         // vor.weights.push_back(static_cast<double>(rand()) / RAND_MAX);
+//         vor.weights.push_back(0.5);
+//     }
+//     // vor.weights.resize(vor.points.size(), 0.0);
+//     printf("starting voronoi\n");
+//     vor.cells.resize(vor.points.size());
+//     vor.compute();
+
+//     std::vector<Polygon> s;
+
+//     for (const auto& cell : vor.cells) {
+//         s.push_back(cell);
+//     }
+
+//     // s.push_back(p);
+//     OptimalTransport ot;
+//     ot.vor.points = vor.points;
+//     // ot.vor.weights.resize(n, 0.0);
+//     ot.vor.weights = vor.weights;
+
+//     ot.vor.cells.resize(n);
+//     ot.optimize();
+
+//     // s.clear();
+//     // for (const auto& cell : ot.vor.cells) s.push_back(cell);
+
+//     save_frame(ot.vor.cells, "ot", 0, ot.vor.points, ot.vor.weights);
+//     save_svg(ot.vor.cells, "ot.svg", &ot.vor.points, "lightblue");
+
+
+//     save_frame(s, "toto", 0, vor.points, vor.weights);
+//     save_svg(s, "toto.svg", &vor.points, "lightblue");
+
+//     return 0;
+// }
+
 int main() {
-    // Polygon p;
-    // p.vertices.push_back(Vector(0.1, 0.2));
-    // p.vertices.push_back(Vector(0.6, 0.4));
-    // p.vertices.push_back(Vector(0.5, 0.7));
-    // p.vertices.push_back(Vector(0.2, 0.5));
-
-    VoronoiDiagram vor;
-
-    int n = 100;
-    vor.points.clear();
-    for (int i = 0; i < n; ++i) {
-        double x = static_cast<double>(rand()) / RAND_MAX;
-        double y = static_cast<double>(rand()) / RAND_MAX;
-        vor.points.push_back(Vector(x, y));
-        // vor.weights.push_back(static_cast<double>(rand()) / RAND_MAX);
-        vor.weights.push_back(0.5);
-    }
-    // vor.weights.resize(vor.points.size(), 0.0);
-    printf("starting voronoi\n");
-    vor.cells.resize(vor.points.size());
-    vor.compute();
-
-    std::vector<Polygon> s;
-
-    for (const auto& cell : vor.cells) {
-        s.push_back(cell);
-    }
-
-    // s.push_back(p);
-    OptimalTransport ot;
-    ot.vor.points = vor.points;
-    // ot.vor.weights.resize(n, 0.0);
-    ot.vor.weights = vor.weights;
-
-    ot.vor.cells.resize(n);
-    ot.optimize();
-
-    // s.clear();
-    // for (const auto& cell : ot.vor.cells) s.push_back(cell);
-
-    save_frame(ot.vor.cells, "ot", 0, ot.vor.points, ot.vor.weights);
-    save_svg(ot.vor.cells, "ot.svg", &ot.vor.points, "lightblue");
-
-
-    save_frame(s, "toto", 0, vor.points, vor.weights);
-    save_svg(s, "toto.svg", &vor.points, "lightblue");
-
+    Fluid fluid(300);
+    fluid.run_simulation();
     return 0;
 }
